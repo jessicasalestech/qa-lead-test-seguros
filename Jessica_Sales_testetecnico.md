@@ -1,298 +1,285 @@
 # Teste Técnico — QA Lead Sênior | Seguros
 
-**Candidata:** Jessica Sales Melo
-**Cliente:** NFoque — programa *Nova Jornada de Sinistros*
-**Data:** 30/09/2026
+**Candidata:** Jessica Sales Melo  
+**Cliente:** NFoque — *Nova Jornada de Sinistros*  
+**Nível:** Sênior (QA Lead)  
+**Data:** 24/09/2026
 
 ---
 
-## Suspensão de julgamento antes de qualquer coisa
+## Objetivo
 
-Dois números convivem neste programa que, juntos, explicam quase todo o resto: **homologação com 100% dos casos verdes** e **~40% de falha intermitente na automação que ninguém confia**. Os dois dizem a mesma coisa — *a frente de QA mede esforço e não risco*. A homologação verde mede que scripts escritos por cada squad rodaram da primeira à última linha dentro da própria fatia, contra simulador/ambiente próprio. Isso não mede o que quebrou em produção. E os 220 cenários E2E falham com frequência alta o bastante para que o time tenha desistido do sinal e aprendido a re-executar até passar — ou seja, o único ativo que *tocava* a jornada real está entregando ruído. É desse lugar que eu parto: não há estratégia, não há rastreabilidade, não há indicador, e o que foi automaticamente é lixo técnico. A boa notícia é que isso é corrigível e barato de corrigir se eu atacar na ordem certa.
+Avaliar a capacidade do candidato de estruturar uma frente de Quality Assurance em um programa crítico e de grande porte, analisar risco sob pressão de cronograma e defender decisões de estratégia, governança, indicadores e liderança — este teste avalia raciocínio, priorização e comunicação, e não exige escrita de código.
 
----
+## Informações Gerais
 
-# 1) Investigar antes de responder ao patrocinador
+| Tempo estimado | Prazo para entrega |
+|---|---|
+| Até 2 horas | 2 dias corridos |
 
-## 1.1 Como 100% de casos verdes convivem com o que aconteceu
+## Cenário
 
-O número "100% verde na homologação" **mede que os pré-casos planejados, rodados por cada squad isoladamente, terminaram como esperado**. Ele não enxerga nada do que quebrou em produção. O que ele não cobre, e que é exatamente o que falhou:
+**Domínio de negócio: Seguros — programa de reconstrução da jornada de sinistros**
 
-- **A jornada completa entre sistemas.** Cada squad testa o pedaço; ninguém percorre aviso → regulação → aprovação → oficina → pagamento atravessando os serviços e as 11 integrações. Uma falha de orquestração entre serviços é invisível para quem testa uma fatia.
-- **O comportamento distribuído real** — ordem de mensagens, redelivery, idempotência, tempos de consumo, concorrência. Nada disso aparece num caso manual single-thread.
-- **O contrato real da integração.** Duas integrações foram validadas contra simulador escrito pelo próprio time; simulado ≠ sistema real.
-- **Volume e carga** — a virada de onda traz 1.870+ avisos; teste manual é 1, 2 casos.
-- **Estado consistente entre sistemas** — que o status de um sinistro concorde entre o core legado, o novo serviço, o antifraude e a mensagem ao cliente.
+Não é esperado conhecimento prévio do mercado segurador. O contexto necessário está todo descrito aqui: quando o cliente sofre um sinistro (uma batida, um vazamento, um roubo), ele registra um aviso; a seguradora analisa o caso — essa etapa se chama regulação —, aprova ou nega, autoriza o reparo em uma oficina ou prestador credenciado e, por fim, paga. Cada uma dessas etapas passa por sistemas diferentes.
 
-Ou seja: o 100% verde responde a pergunta *"os meus casos passaram?"* e não a pergunta *"a produção está correta sob essas condições?"*. É esse o primeiro engano que eu vou desmontar na comunicação — o número verde deu **certeza falsa de cobertura**, e esse é o mesmo risco que a IA aplicada sem validação cria (seção 6).
+Você foi contratado como QA Lead do programa Nova Jornada de Sinistros, de uma seguradora com aproximadamente 2,1 milhões de apólices nos ramos automóvel e residencial. O programa tem quatorze meses de duração e substitui, em ondas, a jornada de sinistros que hoje roda no core legado. A nova jornada é construída em microsserviços e conversa com onze integrações: oficinas credenciadas, prestadores de assistência, motor de antifraude, meio de pagamento, o próprio core legado — que continua sendo a fonte da apólice e da cobertura —, portal do cliente, aplicativo, atendimento por WhatsApp e os envios regulatórios.
 
-## 1.2 Hipóteses para o quádruplo sintoma
+O programa tem quatro squads e cerca de 34 pessoas. A frente de QA, na prática, não existe: há três analistas de qualidade, um alocado em cada squad de desenvolvimento, sem coordenação entre eles e sem nenhum papel na quarta squad. Não há estratégia de testes formalizada, não há plano de testes, não há nenhum indicador de qualidade. O que existe é uma planilha de casos de teste mantida por uma pessoa e uma suíte automatizada com 220 cenários de ponta a ponta que falha de forma intermitente em cerca de 40% das execuções — o time já se acostumou a mandar rodar de novo até passar. Foi para estruturar essa frente do zero que você foi contratado.
 
-Os quatro sintomas — 240 parados em regulação, 62 com mensagens contraditórias, antifraude com o triplo de casos, pagamento duplicado — têm **fisionomia de problema de integração/mensageria**, não de UI. No Itaú eu lidava com arquitetura orientada a eventos (SNS/SQS/DynamoDB/Lambda); é o mesmo padrão de sintoma.
+INCIDENTE: a onda 2 entrou em produção na quinta-feira passada e, nos três dias seguintes, 1.870 avisos de sinistro passaram pelo novo fluxo. O resultado: 240 sinistros pararam no status de regulação e não avançam — não dão erro, não notificam ninguém, simplesmente ficam parados; 62 clientes receberam uma mensagem de sinistro aprovado e, em seguida, outra de sinistro negado; o time de antifraude está recebendo o triplo de casos para análise manual em relação ao previsto, sem explicação; e um pagamento foi feito em duplicidade para uma oficina credenciada, em valor alto, caso que já chegou ao jurídico.
 
-- **Hipótese A (origem única, mais parcimoniosa): defeito na camada de eventos/orquestração da nova jornada.**
-  A nova jornada publica/consome eventos para as integrações (oficina, pagamento, antifraude, canais). Se o consumidor **não é idempotente** (não tem chave de deduplicação), uma mensagem reenviada gera: pagamento em duplicidade (o mesmo sinistro pago duas vezes), dois casos de antifraude para o mesmo sinistro (explicando o triplo de casos = os mesmos sinistros reprocessados), e status contraditórios (aprovado e depois negado = processamento duplicado/fora de ordem na mesma máquina de estados). **Uma única causa explicaria os quatro sintomas.** A parada em regulação poderia ser o componente da mesma falha: um evento de "regulação iniciada" que nunca é publicado, ou um evento consumido mas o estado não persistido de volta — a máquina de estados não avança.
-- **Hipótese B (origens independentes):** os 240 parados são um defeito de persistência/máquina de estados na própria journey (não avança, sem erro, sem notificação) — característica de transação que falha silenciosamente; as mensagens contraditórias e o pagamento duplicado são um defeito de idempotência/ordem de mensageria; o antifraude triplicado pode ser *fan-out* mal configurado (um evento despachado 3× para o tópico do antifraude) — relacionado com B-mensageria, mas não com A-parada.
+O que se sabe até agora, sem conclusão fechada. A homologação da onda 2 terminou com 100% dos casos planejados executados e todos verdes. O ciclo de regressão foi reduzido de cinco para dois dias por pressão de cronograma, com aval verbal do gerente do programa. Duas das onze integrações não possuem ambiente de homologação disponível e foram validadas contra simuladores construídos pelo próprio time de desenvolvimento. Não existe nenhum teste que percorra a jornada completa entre sistemas: cada squad testa o seu pedaço. O critério de aceite das histórias, na prática, é a demonstração ter funcionado na review. E não há gestão estruturada de defeitos — bugs são relatados no canal do time, alguns viram cartão no board, outros se perdem na conversa; ninguém sabe dizer quantos defeitos escaparam para produção na onda 1.
 
-**Como separar o compartilhado do independente:** cruzar os IDs. O primeiro dado a pedir é a interseção entre os 240 parados, os 62 contraditórios, os casos de antifraude considerados "a mais" e o pagamento duplicado. **Se os mesmos números de sinistro aparecem em mais de um sintoma, é origem compartilhada**; se são disjuntos, são defeitos independentes. Esse cruzamento é o primeiro passo do plano e custa um query de SQL (diferencial que eu domino).
+A pergunta que está na sua mesa: a onda 3, que é a maior de todas e inclui o pagamento a prestadores, está planejada para daqui a seis semanas. O patrocinador do programa, um diretor, quer saber de você, por escrito, se pode seguir como está.
 
-## 1.3 Plano de investigação (o que levantar primeiro, com quem, que evidência)
+## Desafio Técnico
 
-**Ordem dos passos (primeiro o que tem maior poder de discriminar hipótese por menor custo):**
+Este teste não pede código. Entregue um documento de decisão: o que você faria, em que ordem e por quê. Não descreva teoria de qualidade de forma genérica — ancore cada resposta neste programa, com este time, estas integrações e este prazo. Dizer o que você deixaria de fora, e assumir o risco disso, vale tanto quanto dizer o que faria. O tempo sugerido está entre parênteses em cada item.
 
-1. **Cruzamento por chave (SQL), hoje.** Pedir acesso de leitura ao store da nova jornada e ao log de mensageria. Query que cruza: sinistros parados em regulação × sinistros com mensagens contraditórias × sinistros que passaram pelo antifraude × o registro do pagamento duplicado. Resultado: separa Hipótese A de B com evidência dura.
-2. **Logs de mensageria/integração e filas contíguas (DLQ).** Com SRE/Operação (no meu caso, era CloudWatch/Datadog): contar redeliveries por mensagem, leitura de dead-letter queue, payloads rejeitados. Quantifica o triplo de casos: são 3 eventos *diferentes* ou o *mesmo* evento reprocessado 3×? A duplicata de pagamento: existe um segundo attempt registrado com a mesma chave de idempotência? Se sim, consumidor não idempotente = causa raiz provável.
-3. **Falar com, na ordem:**
-   - a **squad que orquestra a jornada/state machine** (detém os 240 parados — perguntar como o status "regulação" é persistido e o que dispara o avanço);
-   - quem **construiu os simuladores das 2 integrações** (perguntar o que o simulador *não* reproduz: tempo, redelivery, formato real de payload, resposta de erro);
-   - o **dono da integração de pagamento + o core legado** (idempotência, contrato);
-   - o **time de antifraude** (trazer as horas/lotes dos casos manuais e os IDs — cruzar com os eventos);
-   - **SRE/Operação** (logs, DLQ, métricas da janela da virada).
-4. **Evidência a pedir a quem:**
-   - a SRE/Squad: contagem de redelivery, DLQ, timestamps de publicação × consumo;
-   - ao antifraude: lista de sinistros e horários dos casos manuais (p/ cruzar com eventos);
-   - ao jurídico/financeiro: o número do sinistro e da oficina do pagamento duplicado e se houve *segundo* laço de tentativa no log de pagamentos;
-   - a Dev: o modelo da máquina de estados e o mapeamento evento → transição (para os 240 parados).
+## 1) Investigar antes de responder ao patrocinador (~28 min)
 
-**Estimativa da dimensão real do estrago (inclusive onda 1):**
+Minha primeira conclusão é que o resultado de “100% dos casos planejados executados e aprovados” não representa 100% de cobertura dos testes. Esse indicador mede os casos executados em relação aos casos planejados, mas não demonstra, por exemplo, se os cenários planejados representavam os principais riscos do negócio, se contemplavam fluxos entre múltiplos sistemas, se as regras de exceção foram validadas, se duplicidade e retentativas foram consideradas, se as transições de estado foram verificadas, se houve validação de consistência de dados e se eventos e notificações foram validados.
 
-- Não parar nos 1.870/240 conhecidos. Dimensionar por amostragem ativa: query em produção por **máquinas de estado abertas/além do tempo esperado**, **mensagens com contagem de redelivery acima de limite**, **profundidade de DLQ**, **transações de pagamento com tentativa em duplicidade**, **same-sinistro processado >1× pelo antifraude**. Isso dá a *população* afetada, não só a reportada.
-- **Onda 1 — o dado não existe, e eu não vou inventar um número.** Não há registo de defeitos e ninguém sabe quantos escaparam. Minhas opções: (a) dizer ao diretor que o número é *inauditável retroativamente* — honestidade de líder; (b) reconstruir um **proxy indireto**: incidentes/tickets de suporte no período da onda 1, chamados de service desk sobre sinistro, volume atípico de antifraude/correção manual naquela janela, e o "conhecimento tribal" cruzado entre os analistas. (c) O que importa mesmo é **meter hoje** o escape rate a partir daquela data; reconstrução histórica é esforço com retorno limitado. Vou dizer: *"não tenho como precificar com precisão o que escapou na onda 1, e prefiro te dar isso do que um número redondinho falso; o que posso fazer é te dar a dimensão da onda 2, que é a que está viva, e começar a medir escape de agora em diante."* Se insistirem em número, entrego o proxy com incerteza explícita, nunca como verdade.
+**Referente aos 240 sinistros parados em regulação, eu levantaria algumas hipóteses de causa:**
 
-## 1.4 Resposta ao diretor: onda 3 em seis semanas
+1. Se o evento necessário para avançar o estado do sinistro está sendo publicado
+2. Se o evento é publicado, mas não está sendo consumido
+3. Se o consumidor descartou ou ignorou o evento
+4. Se houve falha ou indisponibilidade de algum componente da arquitetura assíncrona, ou processamento do evento diferente do esperado
+5. Se houve retry e qual foi a quantidade de tentativas
+6. Se alguma mensagem foi direcionada para DLQ e se existe monitoramento
+7. Se houve alteração de contrato de API ou evento entre serviços
+8. Se houve problema de idempotência ou ordenação de eventos
+9. Se o retorno do antifraude não está provocando a mudança para o status esperado.
 
-**Minha recomendação: *segue, mas somente com condições verificáveis em portão explícito — e não segue no modelo atual.*** Não é um no-go absoluto (o prazo e o negócio são reais), mas é um não ao "seguir como está". O que os dados que já tenho (240 parados na janela inicial = ~13% de deadlock) dizem é que **liberar a maior onda — com pagamento a prestadores — sobre o mesmo processo que produziu a duplicata que já chegou ao jurídico é aceitar risco financeiro e regulatório que o programa não pode pagar duas vezes.**
+O time como um todo precisaria consultar banco de dados, logs distribuídos e filas para acompanhar a timeline desses sinistros do início ao fim.
 
-**Condições para a onda 3 seguir (todas verificáveis, em tabela de portão):**
+Nos incidentes de mensagem de aprovado e depois negado, existe uma possível inconsistência entre o estado transacional e a comunicação ao cliente. Eu levantaria hipóteses como:
 
-| # | Condição | Como verifico | Riscos que estou aceitando se permitir seguir |
-|---|---|---|---|
-| C1 | Causa raiz da onda 2 confirmada e corrigida, com a verificação de que os 4 sintomas não reincidem (idempotência testada, DLQ zerada) | Regressão dirigida + canário em produção com os cenários exatos dos sintomas | Reincidência de duplicatas/paradas; novo caso jurídico |
-| C2 | Teste de jornada completa entre sistemas (não existe hoje) criado e **verde estável** sobre a onda 3, incluindo o fluxo de pagamento a prestadores | Novo caso E2E ponta-a-ponta, N execuções limpas consecutivas | Liberar pagamento sem percorrer a jornada inteira = repetir o erro que gerou a duplicata |
-| C3 | As 2 integrações sem homologação ganham defesa: contrato real + canário + monitoração de divergência (seção 2.3) | Contratos + canary métricas para os 2 fornecedores | Divergência silenciosa entre simulador e sistema real |
-| C4 | Portões objetivos de homologação no lugar (entrada/saída em dados, não aval verbal) e critério de aceite escrito por história | Matriz de cobertura por risco assinada; segurança em pagamento | Pressão de prazo volta a cortar regressão por conversa |
-| C5 | Gestão de defeitos numa ferramenta única e rastreada | Todo bug saiu do canal para o tracker; DLQ/estado aferido | Defeitos continuarão "se perdendo no canal" |
+1. Notificação enviada antes da conclusão definitiva.
+2. Processamento assíncrono fora de ordem.
+3. Retry de mensagem.
+4. Consumers diferentes interpretando estados distintos.
+5. Serviço de comunicação utilizando evento incorreto.
+6. Eventos duplicados.
 
-**O que me faria mudar de posição (para o hábil / para o não):**
+**Referente ao aumento de 3x nos casos enviados ao antifraude**
 
-- **Mudaria para seguir antes de 6 semanas** se C1 e C2 estiverem verdes *antes* do prazo e o canário de produção da onda 2 se estabilizar sem recorrência por ~2 semanas de tráfego real — aí eu passo a apoiar, pois as condições que mitiga o risco central já foram atendidas.
-- **Mudaria para NÃO segue (no-go duro)** se, ao fechar as 6 semanas, C1 (causa raiz) ainda estiver aberta ou C2 (jornada ponta-a-ponta) se mostrar impossível de estabilizar a tempo — porque aí liberar pagamento a prestadores é liberar o único fluxo que já provou produzir perda financeira, sem rede.
+Assim como nos demais incidentes, eu levantaria possíveis causas:
 
-Deixo claro a ele que minha função aqui é a de **guardião de portão**: eu posso acelerar quando as condições estiverem boas, e vou atrasar com a mesma energia quando não estiverem — e que cada condição tem *data de vencimento* minha, não hormonal de cronograma, para ele não depender de "aval verbal".
+1. Se houve alguma mudança nas regras de elegibilidade
+2. Se campos obrigatórios estão chegando nulos
+3. Se houve timeout e ele está sendo interpretado como risco.
+4. Se existe feature flag ou configuração incorreta
+5. Se o ambiente de homologação representa corretamente o comportamento real do motor antifraude
+6. Se alguma integração está retornando fallback para análise manual
 
----
+Os incidentes podem não ter exatamente a mesma causa raiz, mas podem compartilhar uma origem. Eu investigaria problemas no processamento assíncrono entre microsserviços, como duplicidade de eventos, eventos fora de ordem, retry, idempotência e observabilidade insuficiente. Em uma arquitetura orientada a eventos, os fluxos precisam ser testados também como jornada integradaneste cenário, aparentemente foram validados de forma isolada.
 
-# 2) Estratégia de qualidade e plano de testes
+Para iniciar o plano de investigação, eu criaria um war room envolvendo QA, desenvolvimento, arquitetura, produto, responsável pelo core, antifraude, pagamentos, SRE/DevOps e negócio de sinistros . Reproduzir tudo manualmente no início seria inviável, eu começaria pela coleta de evidências olhando os logs, IDs dos sinistros, correlation IDs, eventos publicados e consumidos, DLQs, traces, versões dos serviços e alterações recentes. O objetivo é preservar o máximo de evidência possível antes de uma nova implantação.
 
-## 2.1 Níveis de teste, cobertura, executor, momento
+Eu criaria grupos separados para cada incidente, evitando misturar os temas, e durante a investigação procuraria interseções entre eles. Também compararia produção e homologação se foi utilizado mock, ele reproduzia erros? Era possível simular timeout, duplicidade, indisponibilidade e comportamento assíncrono? Nem todo erro de produção será necessariamente reproduzível em ambiente de teste, por isso a limitação precisa ser registrada e o risco deve ficar explícito.
 
-| Nível | O que cobre | Quem executa | Quando | Observação específica deste programa |
-|---|---|---|---|---|
-| **Unitário** | Lógica do serviço individual | Devs (in-sprint) | A cada PR, no pipeline | Não é responsabilidade QA, mas é portão — código novo entra vermelho? |
-| **Contrato entre microsserviços + integrações** | Compatibilidade de schema/contrato entre os 11 serviços e as 11 integrações (incluindo o core legado) | Devs + QA (contratos) | A cada mudança de contrato, no CI | **NOVO**. É o que pega divergência que o "simulador do time" mascara. Versionar contrato. |
-| **Integração (por serviço/integração)** | Cada serviço contra cada integração pública (oficinas, prestadores, antifraude, pagamento, WhatsApp, portal, app, regulatório, core) | QA | Por release, antes da homologação | As 2 sem homolog: ver 2.3 |
-| **Jornada completa entre sistemas (E2E transversal)** | A viagem inteira: aviso → regulação → aprovação/negação → oficina/prestador → pagamento, atravessando todos os serviços + integrações (com simulador onde não há homolog) | QA (especialista) | Antes de cada onda e como regressão dirigida | **O teste que não existe e é a causa-tipo do incidente.** Cria no *modo contínuo*: mesmo com simulação de perna, ele pega ordem, idempotência e valor. |
-| **Manual exploratório + UAT/business** | Jornadas complexas e de julgamento, negócio negando/aprovando caso a caso | QA + negócio | Durante homologação | Manual é onde mora o julgamento regulatório de um sinistro real — não se automatiza isso |
-| **Não funcional (carga na virada de onda, segurança em pagamento, disponibilidade da jornada)** | Volume de virada, auth de integrações de pagamento, alta-disponibilidade | QA + SRE | Antes de cada onda / onda 3 | **NOVO e obrigatório na onda 3** (ver diferenciais) |
+Como estimar os defeitos escapados da onda 1? Como não existe histórico estruturado, eu faria uma retrospectiva usando incidentes, Teams/Slack ou ferramenta de comunicação utilizada, cards criados depois da implantação, deployments emergenciais, acionamentos de rollback, commits de hotfix e problemas reportados pelo negócio.
 
-## 2.2 Critérios objetivos de entrada/saída (para discutir 2 vs 5 dias com dados)
+Como seguir com a onda 3? Eu manteria as seis semanas como objetivo, mas não assumiria hoje que a liberação ocorrerá necessariamente nesse prazo. A liberação dependeria de condições objetivas, como:
 
-**Entrada de um ciclo de testes/homologação de onda:**
-1. Ambiente estável (sem incidente aberto de ambiente bloqueante) e dado de teste disponível com massa definida.
-2. Smoke automatizado da jornada **verde estável** (N execuções limpas).
-3. Nenhum defeito **Crítico** aberto no escopo; **Alto** com plano de correção datado.
-4. Contratos das integrações afetadas disponíveis e validados.
-5. Critério de aceite por história escrito e aceito antes de iniciar (não "funcionou na demo").
+- identificar a causa raiz do pagamento duplicado
+- validar o mecanismo de idempotência nos pagamentos
+- compreender a causa dos sinistros presos
+- ter testes E2E da jornada crítica funcionando
+- validar os contratos das integrações críticas
+- garantir cobertura dos cenários críticos de antifraude
+- não ter defeitos Severity 1 abertos
+- caso ainda existam defeitos Severity 2, liberar somente mediante aceite formal de risco
+- ter um plano de rollback
+- ter observabilidade da onda definida
 
-**Saída (definição de pronto de homologação):**
-1. 100% dos casos de **risco alto/crítico** no escopo executados e verdes *sem reexecução de mascaramento*.
-2. Defeitos abertos ≤ fronteira por severidade (ex.: 0 crítico/alto em escopo; médios com data; baixos em backlog prioritizado).
-3. Jornada ponta-a-ponta entre sistemas verde no ambiente de homologação/integrado.
-4. Idade de defeitos dentro do SLA por severidade.
-5. **Assinatura formal escrita** do responsável de negócio/negócio+arquitetura na matriz de cobertura por risco — substitui qualquer aval verbal.
+Se esses pontos não forem atendidos, minha recomendação seria postergar a onda, porque liberar pagamentos ainda sujeitos a duplicidade pode gerar impacto financeiro, jurídico e operacional significativamente maior.
 
-**Redução 5 → 2 dias como objeto de decisão, não de pressão:** a pergunta deixa de ser "conseguimos em 2 dias?" e vira "**o que estamos dispostos a não testar, em que faixa de risco, e quem assina isso**". Eu trago a matriz de casos classificada por risco; o corte de 5 para 2 dias corta por *faixa de risco descartada*, com o residual documentado e assinado. Se a pressão mandar cortar, corta a faixa de menor risco explícita — nunca a duração de uma regressão com escopo intacto. E o custo desse corte fica visível: se um defeito escapa de uma faixa que foi cortada, a resposta ao patrocinador é "esta foi a decisão de 2 dias — eis o recibo assinado".
+### Dimensionamento do impacto com SQL e evidências de produção
 
-## 2.3 As duas integrações sem ambiente de homologação
+Para dimensionar o impacto dos incidentes, eu trabalharia em conjunto com o time desenvolvimento, dados ou o responsável pelos bancos integrações, solicitando consultas que permitissem identificar a quantidade de sinistros afetados e os padrões envolvidos.
 
-**Opções:**
-1. **Conseguir homologação real do fornecedor** (contatar vendor, ambiente de staging do parceiro). Melhor, mas depende de terceiro e de prazo.
-2. **Contrato real + replay de tráfego**: validar o contrato e *replay* de payloads reais de produção capturados contra o serviço, junto com **canário em produção** em lote pequeno + monitoração de divergência.
-3. **Simulador + testes de contrato**: continuar com simulador, mas blindá-lo com contract tests e *producer-consumer* — o simulador do time já funcionou como "tudo verde" que mentiu, então deixa de ser a única defesa.
-4. **Shadow/canário em produção** com rollback automático e monitoração da divergência.
+Como QA Lead, o meu papel seria definir quais evidências e informações precisariam ser levantadas para apoiar na investigação. As consultas técnicas ao banco de dados seriam executadas pelo time de desenvolvimento ou dados, enquanto eu utilizaria os resultados para dimensionar o impacto, identificar padrões, definir prioridades de teste.
 
-**Recomendação:** para as duas integrações (uma delas é pagamento, dado o incidente — **é a que mais importa**), recomendo **combinação: contrato real + simulador blindado para o dia a dia + canário em produção de baixo volume + monitoração de divergência e correlação de IDs**. Não libero a perna de pagamento real-valor em onda sem alguma forma de espelho/homolog do fornecedor.
+Eu tenho conhecimento de SQL aplicado ao contexto de QA e validação de dados, mas nesse cenário eu não assumiria como responsabilidade do QA Lead executar consultas complexas diretamente em produção.
 
-**Risco residual da minha recomendação (é honesto declarar):** simulador contratado ≠ comportamento temporal do real (tempo de resposta, redelivery, formato real de payload de erro). O residual que permanece é que **divergência de comportamento só aparece em produção, e pode aparecer primeiro como incidente**. Mitigação que reduz, não elimina: canário pequeno + monitoração ativa dos fluxos de pagamento. E um go/no-go explícito no toque real-valor da integração de pagamento.
+## 2) Estratégia de qualidade e plano de testes (~25 min)
 
-## 2.4 O que cobrir com profundidade vs o que cobre-se superficial/nenhum
+A estratégia seria baseada em risco, deixando claro que QA não deve ser o único responsável por encontrar defeitos. A qualidade precisa existir desde o requisito até a produção.
 
-**Critério (por risco, score):** `Score = (severidade da falha) × (verossimilhança dado a mudança) × (impacto de negócio/regulatório) × (exposição de integração e de dinheiro)`. Testar com profundidade o que move dinheiro, afeta cliente final, tem cap regulatório, ou cruza mais integrações. Onde o custo de testar excede o custo esperado do defeito, cobrir superficial ou declarar não-cobertura **com assinatura do risco**.
+Os níveis de teste seriam:
 
-**Aplicado a este programa (nomeando):**
-- **Profundidade:** fluxo de pagamento a prestadores/oficinas (onda 3), aprovação/negação e mensagens ao cliente, regulação (deadlock dos 240), integrações de pagamento e antifraude, envios regulatórios, correção de defeito da onda 2 (idempotência/ordem). Tudo que toca em dinheiro ou cliente.
-- **Cobertura superficial:** telas de consulta/relatórios de baixo uso, mensagens de borda de WhatsApp, textos de notificação não-regulatórios, perfis de acesso administrativo não exposto.
-- **Não coberto (declarado e assinado):** cenários de cancelamento/estorno em volume, as integrações expostas que não movem dinheiro, backlog de cosmética. Assumo explicitamente esse risco — é a restrição real de gente/tempo, e o preço de "testar tudo" é não testar nada direito.
+1. Testes unitários realizados pelo time de desenvolvimento e testes de componente realizados por desenvolvimento e QA
+2. Testes de API realizados pelo QA e testes de integração
+3. Testes E2E da jornada
+4. Testes de regressão separados por risco: smoke test em todo deploy, regressão crítica para os fluxos de maior risco antes da release e regressão ampliada com funcionalidades secundárias antes das ondas.
+5. Testes exploratórios para jornadas novas ou regras com alto grau de variabilidade
+6. Testes não funcionais, incluindo performance de APIs, filas, processamento em lote, pagamento e segurança, como exposição de dados e autenticação
 
----
+Para iniciar um ciclo de testes, eu definiria critérios de DOR e DOD.
 
-# 3) Governança: defeitos, aceite, indicadores
+DOR
 
-## 3.1 Fluxo de gestão de defeitos
+- requisitos definidos
+- critérios de aceite existentes
+- dependências identificadas
+- build implantada e estável
+- smoke test aprovado
+- massa de teste disponível
+- integrações necessárias acessíveis ou alternativa formalizada
+- casos críticos revisados
+- ausência de impedimentos técnicos
 
-**Nascimento:** qualquer pessoa (QA, dev, negócio, suporte) detecta e registra. **Regra de ouro: "se não está na ferramenta, não é defeito."** O canal continua existindo como porta de entrada, mas **toda** menção no canal é triada no mesmo dia por mim/analista e convertida em registro estruturado — nada fica só em excesso de conversa.
+DOD
 
-**Informação que carrega (obrigatória):** título claro, passos de reprodução, esperado vs atual, ambiente (homolog/prod), **severidade**, **prioridade**, evidência (log/screenshot/ID de sinistro), história/requisito vinculado, e o impacto de negócio. Lanço os campos na ferramenta para que rastreabilidade e métricas existam — esse é o dado que alimenta o escape rate da seção 3.3.
+- 100% dos cenários críticos executados;
+- 100% dos cenários críticos aprovados;
+- zero Severity 1;
+- zero Severity 2 sem aceite formal;
+- jornada E2E crítica aprovada;
+- regressão crítica aprovada;
+- taxa máxima de falha de automação acordada;
+- observabilidade preparada;
+- rollback definido.
 
-**Classificação:**
-- **Severidade** (impacto técnico): Crítico (bloqueia jornada / perda financeira / violação regulatória / deadlock — ex.: os 240, a duplicata), Alta (funcionalidade principal degradada sem workaround), Média (função acessória, com workaround), Baixa (cosmética/usabilidade).
-- **Prioridade** (urgência de negócio + agenda): define a *ordem* de correção, decidida no triage.
+Para integrações sem ambiente de homologação, eu avaliaria virtualização de serviço e mocks capazes de reproduzir timeout, erro e indisponibilidade.
 
-**Decisão do que entra na correção (triagem):** um **triage diário de 15 minutos**, QA Lead + tech lead da squad + (se dinheiro/regulatório) negócio. Decisões: corrigir agora / agendar / backlog / aceitar como "não-defeito" (com justificativa registrada). **Quem decide:** QA não decide sozinho — decide o *conjunto* com dev; QA é quem **susta o portão** e registra a decisão. Nada é corrigido "porque deu na review".
+Separar a responsabilidade e momento de execução: desenvolvimento executa unitários e componentes a cada mudança, QA e desenvolvimento mantêm testes de API/contrato no CI,  QA conduz integração e exploração durante a sprint, a jornada E2E crítica é executada em ambiente integrado antes de cada onda, negócio participa da homologação dos fluxos críticos com critérios definidos previamente. Testes não funcionais de carga, segurança e disponibilidade são executados antes da liberação das ondas de maior risco e repetidos quando houver mudança relevante de arquitetura.
 
-**Acordo de prazo por severidade (SLA):**
-- **Crítico:** trava a linha; correção em até ~4h úteis; **bloqueia homologação/release** até resolver.
-- **Alta:** correção ainda no sprint corrente ou +1; precisa do canário/monitoração.
-- **Média:** próximo sprint, com data.
-- **Baixa:** backlog priorizado, sem data garantida.
+Critérios de entrada e saída deixam de ser negociados apenas por prazo. Se a regressão precisar cair de cinco para dois dias, a decisão deve ser sustentada pelo risco coberto, suíte crítica selecionada, defeitos abertos, estabilidade da automação e impacto do que ficará sem executar. A redução pode ocorrer, mas o risco remanescente precisa estar explícito e ter aceite formal do responsável pelo negócio/programa.
 
-**Conviver com o canal:** o canal é a *detecção precoce* e informal; a ferramenta é o *registro formal*. Implantarei que ninguém considera sabido um problema que esteja só no chat — o time amarra "relatar no canal" → "abrir no tracker" como dois gestos do mesmo ato. E há regra de **contenção**: a duplicata/parada não é "resolvida" quando a última resposta do chat for boa — só quando o registro no tracker estiver fechado com causa raiz.
+Para as duas integrações sem ambiente de homologação, eu consideraria alternativas como virtualização de serviço com mocks ou stubs controlados, utilização de sandbox do fornecedor quando disponível, validação de contratos das APIs ou eventos e, em situações específicas, uma validação controlada após a implantação, utilizando feature flag ou liberação gradual quando a arquitetura permitir.
 
-## 3.2 Critérios de aceite/pronto no lugar de "funcionou na demo"
+Minha recomendação seria utilizar virtualização de serviços combinada com validação de contrato. Os simuladores não deveriam reproduzir apenas o caminho de sucesso, mas também situações como timeout, indisponibilidade, respostas inválidas, duplicidade, lentidão e códigos de erro.
 
-**Definition of Ready (antes de pegar a história):**
-- Critério de aceite **escrito, testável e sem ambiguidade** (quando? com que dado? que resposta?).
-- Integrações envolvidas nomeadas e com **contrato disponível**.
-- Massa de dado necessária identificada (e, se de segurados, reais → mascarada, seção 5).
-- Requisitos não-funcionais aplicáveis (se toca em carga/segurança) anotados.
-- Método de teste (nível + env) declarado.
+A implementação técnica dos testes de contrato ficaria principalmente com o time de desenvolvimento. Como QA, eu atuaria junto ao desenvolvimento e arquitetura identificando as integrações críticas, levantando os cenários que precisam ser protegidos e acompanhando os resultados dessas validações.
 
-**Definition of Done (para liberar a história):**
-- Código revisado + unitário/contrato verdes no CI.
-- Critérios de aceite demonstrados **contra evidência (teste automatizado ou execução rastreada)**, não por demo.
-- Teste de integração/contrato da trilha afetada verde.
-- **Zero defeito Crítico/Alto aberto na história** com justificativa se houver residual.
-- Dado/valores validados via SQL (assert de estado, não só tela).
-- Rollback/retorno considerado para a mudança (na esteira do 5.2).
+Mesmo com essas validações, permanece um risco residual, porque mocks e testes de contrato não reproduzem integralmente o comportamento do sistema externo em produção. Por isso, eu registraria esse risco e complementaria a estratégia com smoke pós-release, monitoramento reforçado, feature flag quando possível e plano de rollback.
 
-A "demo funcionou" deixa de ser critério: vira demonstração de *resultado*, acompanhada do registro de execução e dos asserts.
+A priorização dos testes seria baseada no impacto e na probabilidade do risco. Teriam cobertura mais profunda os fluxos de pagamento, mudança de status do sinistro, antifraude, consulta de apólice e cobertura, processamento assíncrono, notificações e a jornada crítica entre os sistemas.
 
-## 3.3 Quatro a seis indicadores
+Portal, aplicativo, WhatsApp, oficinas e prestadores teriam cobertura proporcional ao risco de cada funcionalidade. Cenários de baixo impacto, variações visuais e combinações muito raras teriam menor prioridade dentro da janela de seis semanas, com o risco restante registrado e conhecido pelo programa. O E2E crítico não substituiria os testes de API, contrato e componente. Ele existiria em pequeno número para validar as jornadas de maior risco de ponta a ponta, enquanto a maior parte da cobertura permaneceria em camadas mais rápidas, estáveis e com melhor capacidade de diagnóstico em caso de falha.
 
-| # | Indicador | Fórmula | Fonte | Frequência | Público | Decisão concreta que sustenta |
-|---|---|---|---|---|---|---|
-| 1 | **Defeitos escapados (Escape Rate)** | `(defeitos de produção)/(defeitos totais do período)` | Tracker/Jira | Semanal | Diretor + gestores + squads | Decidir **go/no-go da onda e se o portão de homologação foi honesto**; é a mais ligada a este incidente |
-| 2 | **Cobertura de jornadas críticas entre sistemas** | `(cenários E2E* transversais executados)/(jornadas críticas mapeadas)` | Plano de teste + execução | Por onda | QA + PM | Decide se a onda 3 tem rede para **liberar pagamento/mensageria** |
-| 3 | **Taxa de estabilidade da automação (flaky)** | `(falhas de cenários por instabilidade)/(execuções da suite)` | Suite + Allure/JUnit | Semanal | Time QA/Dev | Decide o que **barra release** (se > limiar, trava) e o que se **descarta/estabiliza** do lote de 220 |
-| 4 | **Idade de defeitos abertos por severidade vs SLA** | `média de idade por severidade; % fora do SLA` | Tracker | Diário | QA + squads + PM | Decide prioridade da correção e **se segura o release**; mostra riscos que "moram no canal" |
-| 5 | **Tempo médio até detecção (MTTD) de incidente em produção** | `tempo entre a falha ocorrer e alertar/a identificação` | Monitoração + incidentes | Semanal | SRE + QA | Decide se a **monitoração/observabilidade está pegando** (os 240 ficaram mudos — sem esse número repetimos) |
-| 6 | **Contenção de defeitos por fase** | `(defeitos achados antes da homologação)/(total)` | Tracker | Por onda | QA Lead | Decide se o *shift-left* (teste no refinamento, contrato no CI) **está funcionando** ou se ainda se descobre tudo tarde |
+## 3) Governança: defeitos, critérios de aceite e indicadores (~22 min)
 
-## 3.4 Dois indicadores que eu NÃO adotaria e por quê
+Para gestão de defeitos, eu manteria o chat como canal de comunicação rápida, mas todo defeito confirmado precisaria virar registro no board. O fluxo poderia ser: identificado/triagem > confirmado > priorizado > em correção > pronto para reteste > reteste > fechado.
 
-1. **"Número de casos de teste executados / volume de casos"** — métrica de vaidade: premia volume, não risco. É fácil de inflar (mil forenses fáceis), não decide nada, e reproduz exatamente o erro do "100% verde" que já mentiu aqui.
-2. **"Cobertura de código percentual como alvo/portão"** — dá falsa sensação de cobertura: 90% de linhas num serviço não diz nada sobre ordem de mensagens, idempotência ou a jornada entre sistemas — é onde este incidente nasceu. Line coverage como meta estimula *gaming* (testar código fácil e verde) em vez de risco.
+O registro deveria conter, no mínimo: título claro, ambiente, passo a passo para reprodução, comportamento esperado, comportamento atual, evidências, logs quando houver, severidade, prioridade, impacto e versão. A severidade mede o impacto e a prioridade define a ordem de tratamento. Produto, QA e desenvolvimento deveriam participar da triagem. Também seria necessário estabelecer um SLA inicial por severidade.
 
----
+Para os critérios de aceite, cada história deveria possuir critérios claros. Eu adotaria BDD com linguagem natural e padrão Gherkin quando aplicável.
 
-# 4) A suíte automatizada em que ninguém confia
+Uma história só entraria em desenvolvimento quando atendesse ao DOR, com pontos como:
 
-## 4.1 O que fazer com os 220 cenários
+- objetivo claro
+- regra de negócio conhecida
+- critérios de aceite definidos
+- integrações identificadas
+- risco avaliado
+- dependências conhecidas
+- dados necessários identificados
 
-**Diagnóstico antes de decidir — triagem por cluster de falha, não decisão às cegas.** Rodo a suite hoje, capturo as falhas reais e as **clasifico**:
+No DOD, a história só estaria pronta quando:
 
-- **Falha ambiental do teste** (espera fraca, seletor quebrado, dado de teste compartilhado/concorrente, ambiente instável) → o *teste* é o defeito, não o produto. Tendem a ser a maioria dos 40%.
-- **Falha genuína de produto/contrato** mascarada pelo "re-executar até passar" → o time pode estar *engolindo defeito real*.
+- código concluído
+- code review realizado
+- testes unitários aprovados
+- critérios de aceite testados
+- testes de API executados, quando aplicável
+- testes automatizados atualizados, quando aplicável
+- evidências registradas
+- defeitos críticos resolvidos
+- documentação criada ou atualizada
+- observabilidade incluída
 
-**Decisão por cenário (combinação recuperar + descartar graciosamente):**
-- **Manter** (recuperar): cenários de **jornada crítica** que, uma vez estabilizados, têm sinal direto no risco de negócio (pagamento, regulação, aprovação/mensagem).
-- **Quarentena** (estabilizar sob custo): valor altos mas flaky — ganham isolamento de dado (*unique IDs*, massa própria), esperas corretas, e **definição de estável = N execuções limpas consecutivas sem reexecução**.
-- **Descartar/reescrever**: redundantes, sem valor de risco, ou impossíveis de estabilizar sem reescrita completa e baixo retorno — custo de manter supera o benefício.
+### Severidade, prioridade e acordo de tratamento
 
-**Justificativa pelo que mais importa (confiança):** o ativo vale não pelas linhas, mas pelo **sinal**. 220 cenários que mentem 40% valem *menos que 30 que nunca mentem*. O esforço de recuperação é direcionado só ao que sustenta decisão; desistir do resto é recuperar *confiança* — o efeito colateral que ninguém mede mas que quebrou este time (já desistiram do sinal). **Regra anti-cultura:** reexecutar é permitido *uma* vez e **sempre registrado e investigado**; reexecutar silenciosamente até passar = falha de processo, não de sorte.
+Severity 1 (Crítica): indisponibilidade ampla, corrupção/perda de dados, pagamento duplicado/indevido, falha que possa gerar impacto jurídico ou regulatório, ou bloqueio da jornada sem workaround. Tratamento imediato, war room, contenção em até 1 hora e correção/rollback prioritário.
 
-## 4.2 Estratégia de automação dali em diante
+Severity 2 (Alta): função crítica degradada ou bloqueada para parcela relevante dos clientes, mensagem de decisão incorreta, falha de integração crítica ou processamento que exige intervenção operacional significativa, com workaround limitado. Triagem no mesmo dia e plano de correção em até 24 horas; para release, exige correção ou aceite formal de risco.
 
-- **Pirâmide correta, em vez de "tudo E2E":**
-  - **Unitário + contrato** (base): rápido, em todo PR, **devs executam** no CI. É o volume barato que pega divergência de contrato.
-  - **Integração/API**: em CI por deploy, quebrando contrato das 11 integrações. **QA + devs**.
-  - **Poucos E2E de jornada crítica** (topo, raros): execução em release/canário, **QA especialista**. Menos cenários, mais sinal, zero flaky tolerado.
-- **O que fica manual/exploratório:** jornadas de julgamento (aprovação negocial de um sinistro real, casos únicos de negócio), UX e cenários negativos por empresa específica — onde automação daria falso sinal e o manual dá visão. **Nunca automatizar o que flakiness corromperia.**
-- **Automatizar o que:** (1) é repetível, (2) tem alto risco, (3) tem custo baixo de falso negativo, (4) não depende de julgamento. Não automatizar o julgamento.
+Severity 3 (Média): defeito funcional com impacto moderado, restrito, com workaround viável e sem risco financeiro/regulatório imediato. Triagem em até 1 dia útil e planejamento de correção na sprint/release seguinte conforme prioridade.
 
-## 4.3 O que barra vs o que informa — e como fazer respeitarem
+Severity 4 (Baixa): problema cosmético, usabilidade menor, texto ou comportamento sem impacto relevante na jornada. Entra em backlog e é priorizado por produto.
 
-**Barra release (bloqueia — RED é RED, sem reexecução):**
-- Unitário/contrato vermelho no CI.
-- **E2E da jornada crítica** (inclusive a transversal) vermelho.
-- Contrato da integração que move dinheiro (pagamento) vermelho.
-- Segurança em pagamento falhou.
-- **Estabilidade: flaky acima do limiar** decide-se na mesma linha — se a suite não é estável, o portão nem roda.
+A prioridade (P1 a P4) seria definida na triagem por QA, Produto e Desenvolvimento, considerando severidade, alcance, urgência de negócio, frequência e existência de workaround. Severidade não seria reduzida apenas para caber no cronograma.
 
-**Informa (não bloqueia sozinho):** cobertura % (informativo), tendências de performance (informa, não trava), regressão completa de faixa não-crítica, código cobertura, achados exploratórios.
+Para os indicadores, eu usaria: cobertura de riscos críticos, taxa de aprovação da regressão crítica, defeitos abertos por severidade, lead time de defeitos críticos e flaky test rate.
 
-**Como fazer a regra ser respeitada num programa que já cortou regressão por pressão:**
-1. **Colocar no processo escrito, não na autoridade.** O portão vira parte do Definition of Done e do release checklist formal, não um "QA bravo".
-2. **Prefixo com o sponsor.** O diretor assina que RED de pagamento/segurança segura a liberação — ele mesmo passa a ser o guardião do portão, o que inverte o incentivo de "atropelar QA".
-3. **Conversa sobre o dado, não sobre poder.** Quando um RED aparecer, discute-se o *sinal específico* (que cenário, que impacto) e não "por que o QA está travando". A conversa deixa de ser pessoal.
-4. **Custo da violação visível.** Cada RED liberado à força fica registrado com quem decidiu — e quando escapar, a resposta ao patrocinador é o recibo da decisão. A onda 2 é o exemplo vivo do custo de não ter portão.
+### Indicadores de qualidade e decisão
 
----
+1. Cobertura dos riscos críticos = riscos críticos com ao menos um teste aprovado / total de riscos críticos mapeados x 100. Fonte: matriz de risco + ferramenta de testes. Leitura: diária na janela de release e semanal fora dela. Público: QA Lead, Produto, Arquitetura e gerente do programa. Decisão: identificar risco crítico sem evidência suficiente e bloquear/condicionar a liberação.
 
-# 5) Time, iniciativa além do escopo e comunicação
+2. Taxa de aprovação da regressão crítica = cenários críticos aprovados / cenários críticos executados x 100. Fonte: pipeline/gestão de testes. Leitura: por execução. Público: squads e release management. Decisão: permitir ou bloquear avanço para homologação/release.
 
-## 5.1 Organização dos 3 analistas + a 4ª squad (dados)
+3. Defeitos escapados para produção por severidade = quantidade de defeitos encontrados em produção que deveriam ter sido detectados antes da release, segmentados por Sev1-Sev4. Fonte: incidentes + board de defeitos. Leitura: por onda e mensal. Público: liderança do programa. Decisão: ajustar cobertura, processo e investimento nas áreas onde o escape está ocorrendo.
 
-O modelo atual "um analista por squad-de-dev" dilui 3 pessoas em 4 frentes e deixa o ponto de maior risco — **dados/processamento** (os 240 parados vivem aqui) — sem qualidade alguma. Reorganizo em **capítulo/centro de excelência**, eu como QA Lead respondendo pela estratégia, teste, governance e indicadores de todo o programa, com os 3 distribuídos por risco, não por squad:
+4. Lead time de defeitos críticos = tempo entre identificação e contenção/solução de Sev1/Sev2. Fonte: Jira/board + incident management. Leitura: por incidente e tendência mensal. Público: QA Lead, Engenharia e diretor em casos críticos. Decisão: avaliar capacidade de resposta e necessidade de reforço operacional/arquitetural.
 
-- **Analista 1 — Especialista de jornada/integração/API (e E2E transversal).** Dona das jornadas ponta-a-ponta entre sistemas (as que pegaram o incidente) e dos contratos/11 integrações. É a posição mais crítica e a razão central do que quebrou.
-- **Analista 2 — Embutida na squad de maior risco da onda 3 (pagamento/prestadores + regulatório).** In-sprint, do refinamento ao DoD, com foco em dinheiro e conformidade.
-- **Analista 3 — Rota/cobertura das demais squads + a squad de dados.** Cobre as duas frentes restantes por prioridade de risco e responde à squad de dados (estado do sinistro, qualidade da fonte), com apoio de automação/contrato.
+5. Flaky test rate = testes com resultado inconsistente sem mudança funcional / total de testes automatizados executados x 100. Fonte: CI/CD e histórico de execuções. Leitura: semanal e por release. Público: QA/Engenharia. Decisão: retirar testes não confiáveis do gate, priorizar estabilização e medir recuperação da confiança.
 
-**Qualidade desde o início, não no fim da esteira:** os 3 entram no **refinamento** (3 Amigos com dev e produto), análise de **ambiguidade de requisito** antes de escrever caso, e participação em **revisão de arquitetura** de integração — não só "testar no fim". A prevenção vive no requisito; a detecção que salvou aqui veio cedo demais.
+6. Integridade da jornada E2E crítica = jornadas críticas aprovadas de ponta a ponta / jornadas críticas planejadas x 100. Fonte: suíte E2E + evidências de integração. Leitura: antes de cada onda. Público: QA Lead, Produto e patrocinador. Decisão: evidenciar se a cadeia entre sistemas está realmente validada.
 
-**Ampliar o time?** Recomendo **+1** — especificamente automação/engenharia de testes de integração-API, pareado com a squad de dados. **Argumento para o diretor, em termos dele:** o incidente custou 240 sinistros presos, 62 clientes recebendo mensagens contraditórias e **uma duplicata de valor alto que já está no jurídico**. Mais uma pessoa custa uma fração de uma duplicata dessas, e a onda 3 é a maior, com dinheiro a prestadores. Trago como mitigação de *risco financeiro e regulatório*, não conforto de time.
+Indicadores que eu não adotaria como meta principal neste momento: quantidade total de casos de teste, porque volume não demonstra cobertura de risco e percentual geral de testes aprovados, porque pode produzir 100% verde sobre uma seleção inadequada, exatamente como ocorreu na onda 2. Também evitaria usar quantidade de bugs encontrados por QA como meta individual, pois incentiva comportamento contrário à prevenção de defeitos.
 
-## 5.2 Três melhorias que eu conduziria por iniciativa própria (em ordem)
+## 4) A suíte automatizada em que ninguém confia (~18 min)
 
-Nada disso foi pedido. Eu faria, por **impacto × urgência × dependência**:
+Como estratégia, eu faria uma triagem inicial para não descartar os 220 testes imediatamente. Classificaria os testes em: críticos e confiáveis, que seriam mantidos, críticos e flaky, que teriam correção prioritária, cenários de baixo valor e alta manutenção, que poderiam ser removidos, cenários duplicados, que seriam consolidados, e cenários que deveriam estar em camada inferior, que poderiam migrar para API ou componente.
 
-1. **Rastreabilidade requisito → caso de teste → execução → defeito, numa ferramenta única** (Jira + Zephyr ou similar). *Por quê:* é o **facilitador de tudo** — sem ele não há escape rate, não há portão honesto, não há resposta ao diretor com número. É a peça que desbloqueia as seções 1 e 3 e custa configuração, não contratação. Maior multiplicador.
-2. **Governança de massa de teste e dados de segurados (LGPD).** Hoje a massa é criada à mão com **dados reais de segurados**. Isso é risco legal e reputacional que pode custar mais que o programa inteiro (multa de LGPD). Não é "nice to have": é não-negociável assim que há dado pessoal. Implantar mascaramento/dados sintéticos e regra de nunca colar dado real de segurado em prompt de IA (seção 6).
-3. **Plano de rollback/retorno da virada de onda.** O incidente provou que virada de onda falha e **não havia rede**. Antes de qualquer onda nova — não dá para voltar? — criar mecânica de retorno/rollback + critério de acionamento + monitoração de divergência. É proteção operacional imediata contra a classe de falha que já queimou o programa uma vez.
+Para decidir o que manter, eu avaliaria criticidade do fluxo, frequência de execução, histórico de defeitos encontrados, custo de manutenção, duração e dependências externas. Pressão de prazo não altera o resultado técnico, altera apenas quem assume explicitamente o risco para nova estratégia, eu seguiria uma pirâmide adaptada, concentrando maior volume em testes unitários, API, componentes e contrato, e menor volume em integração e E2E. Os testes E2E ficariam reservados às jornadas realmente críticas. A automação priorizaria regressões repetitivas, APIs críticas, regras estáveis e cenários negativos recorrentes. Funcionalidades recém-criadas, UX e comportamentos ainda instáveis permaneceriam inicialmente em testes manuais e exploratórios.
 
-Escolhi essas três porque todas tiram risco **hoje** sem esperar 6 semanas, e criam a infraestrutura de governança que as seções 1–4 precisam. (Deixaria de fora, conscientemente, a documentação das regras de sinistro — importante, mas de retorno mais lento que as três acima e que não paga a onda 3.)
+Eu adotaria uma combinação: recuperar o que tem valor e descartar/reimplementar o que não gera sinal confiável. Nas primeiras semanas, cada um dos 220 testes seria classificado por criticidade, estabilidade, camada correta, tempo de execução e dependência externa. Teste crítico e flaky entra na fila de estabilização; teste de baixo valor, duplicado ou excessivamente E2E é removido ou migrado para API/contrato.
 
-## 5.3 Comunicação ao diretor patrocinador (até 6 linhas)
+Quality gates de automação: bloqueiam a entrega falhas reproduzíveis em testes unitários/componentes obrigatórios, contratos de integrações críticas, APIs críticas, smoke e E2E das jornadas de alto risco, além de qualquer falha relacionada a pagamento, idempotência, status ou comunicação de decisão. Testes flaky conhecidos, cenários de baixa criticidade e suítes exploratórias/longas apenas informam até serem estabilizados. Em caso de falha, a execução é considerada inconclusiva até haver diagnóstico. A exceção a um gate só pode ocorrer com evidência do defeito/instabilidade, impacto analisado, compensação definida, responsável nominal e aceite formal de risco.
 
-> Diretor, preciso ser direto: a homologação da onda 2 marcou 100% verde, mas ela não testa a jornada entre sistemas — e foi aí que quebramos. Tenho 240 sinistros presos, 62 clientes com mensagem contraditória e uma duplicata que já está no jurídico; causa raiz em investigação, mas sem condição de liberar a onda 3 no mesmo modelo. A onda 3 pode seguir em 6 semanas, desde que fechemos 5 portões objetivos (causa raiz corrigida, teste de jornada ponta-a-ponta verde estável, as 2 integrações sem homolog blindadas, critérios de aceite escritos e gestão de defeitos numa ferramenta). Quero acelerar quando as condições estiverem boas — e vou segurar com a mesma convicção quando não estiverem. Proponho nos falarmos na terça para validarmos o plano e os prazos.
+## 5) Time, proatividade além do escopo e comunicação (~17 min)
 
----
+Pensando nos três QAs hoje isolados em squads diferentes, eu criaria uma frente de QA do programa, mesmo que operacionalmente os profissionais continuem apoiando as squads.
 
-# 6) Uso de IA no meu dia a dia
+QA 1 - foco em sinistros, core e regras de negócio
 
-**Onde eu me apoiaria, neste programa — e o que eu pediria de fato:**
+QA 2 - foco em integrações, APIs, antifraude e eventos
 
-- **Análise de requisitos (ambiguidade e risco):** pedir a um Claude/Copilot/Gemini para "localizar aceite ambíguo, lacunas de borda/negativa, menções a regulatório ou a integração sem contrato explícito" em histórias. **Onde confio e onde valido:** confio em gerar *perguntas* e *hipóteses* (o que me faz enxergar o que eu não vi), mas **valido cada sugestão com negócio** — IA não conhece a semântica de sinistro desta casa.
-- **Geração/revisão de casos de teste:** gerar Gherkin e casos negativos a partir do aceite — **confio no esqueleto, valido contra o contrato real** e contra a jornada. Nunca gero "muitos casos" só para parecer coberto.
-- **Análise de padrões em base de defeitos:** pedir clusters de defeito (por componente, severidade, sintoma) em cima de **dado agregado e anonimizado** — idem o risco: já sei a lição de que "muitos testes" ≠ cobertura. **Confio na clusterização, valido as conclusões com o time**.
-- **Investigação de cenários instáveis de automação (os 220/40%):** dar *log de falha* (sem dado de segurado) e pedir hipóteses de causa (espera, dado compartilhado). **Confio em gerar direções de investigação, valido rodando o experimento** — IA não é quem decide o que o cenário "deve esperar".
-- **Criação de massa de teste:** geração **sintética**, nunca real. Melhor caso de uso seguro.
-- **Documentação e comunicação ao patrocinador:** esboço inicial; **reviso integralmente** — a voz e a decisão final (como na seção 5.3) são minhas.
+QA 3 - foco em canais, pagamentos, jornada E2E, automação e apoio à squad de dados
 
-**Onde a IA cria falsa sensação de cobertura:** o mesmo erro do "100% verde". LLM que **gera muitos casos testáveis, bem formatados, e que "passam"** produz a ilusão de que a jornada está coberta quando, na verdade, nenhum percorre a integração entre sistemas de verdade. Geração em volume é a nova "demo que funcionou" — precisa de portão duplo: vínculo com critério de aceite real + execução que escape ao "verde por reexecução".
+Como QA Lead, eu ficaria responsável pela estratégia, risco, governança, métricas, planejamento, integração entre as squads e comunicação executiva.
 
-**Riscos que eu observaria (e como me protejo):**
-- **Alucinação:** IA "sabe" comportamento de integração que não existe na jornada. Regra: nada que ela produz entra num portão sem rastreabilidade ou execução real.
-- **LGPD / dados de segurados em prompt:** colar sinistro/política de segurado real em um modelo externo é violação. **Regra dura: nunca colo dado pessoal de segurado em prompt; massa é sintética/mascarada; os 11 integrações têm IDs e payloads que tratamos como sensíveis.**
-- **Dependência/atrofiamento do risco:** time que delega o "por que quebraria?" à IA deixa de pensar sobre o próprio risco. Mantenho a IA como ferramenta de *gerar e questionar*, nunca de *assinar*. A pergunta de risco é a do QA senior, ancorada em SQL, contrato e jornada real.
+Implementaria uma abordagem de shift-left testing, incluindo QA desde discovery, refinamento, arquitetura, definição de critérios de aceite, planejamento e review de riscos. Para justificar ampliação do time, eu levaria ao diretor um argumento de risco: três profissionais precisam garantir quatro squads, onze integrações e uma jornada com impacto financeiro. A ausência de cobertura já se materializou em pagamento duplicado, sinistros bloqueados, aumento operacional de antifraude e comunicação incorreta. O custo adicional de capacidade de QA deve ser comparado com perda financeira, horas de incidente, retrabalho, atraso, risco jurídico e risco regulatório.
 
----
+Eu priorizaria três melhorias:
 
-## Síntese da decisão ao patrocinador
+1. Plano de rollback e estratégia de implantação: checklist, critérios de rollback, responsáveis, feature flags quando possível, plano de comunicação e smoke test pós-release
+2. Rastreabilidade entre requisito, cenário, execução e defeito, utilizando uma ferramenta como Jira/Zephyr
+3. Gestão de massa de teste: evitar dados reais de segurados em homologação, utilizar dados sintéticos, perfis controlados, regras de acesso e limpeza das massas, considerando LGPD
 
-**Resposta direta: a onda 3 não segue "como está". Segue em seis semanas sob cinco condições verificáveis, com o portão de pagamento e de jornada ponta-a-ponta como inegociáveis, ou não segue.** O 100% verde original não contava histórias de integração; a nova defesa sim. Eu assumo a posse dos portões, das datas de vencimento e dos recibos escritos de cada decisão de risco — e trago os números (escape, estabilidade da automação, cobertura de jornada, idade de defeito, MTTD) para que, daqui para frente, nenhuma decisão de liberação dependa de aval verbal.
+Na quarta squad, sem QA dedicado, eu usaria cobertura compartilhada por risco e defenderia capacidade adicional temporária. O argumento para o diretor seria financeiro e operacional: a lacuna já produziu um pagamento duplicado, 240 sinistros bloqueados, 62 comunicações conflitantes e aumento de 3x no antifraude. Reforçar QA custa menos do que repetir incidentes com impacto jurídico, financeiro, regulatório e reputacional.
 
----
+## 6) Uso de IA no seu dia a dia (~10 min)
 
-*Documento elaborado como teste técnico — QA Lead Sênior | Seguros. Todos os valores (1.870/240/62/triplo/duplicata) são os fornecidos no cenário; as decisões assumem que a causa raiz pode ser compartilhada (mensageria/idempotência) ou independente (estado + mensageria), a ser resolvida pelo cruzamento de IDs no passo 1 da investigação.*
+No dia a dia, eu utilizaria IA como acelerador de análises e não como autoridade sobre qualidade. Tenho experiência utilizando ferramentas como Copilot, Claude, Devin e outras soluções de IA. Neste programa, poderia utilizá-las em frentes como análise de requisitos, geração inicial de cenários, análise de defeitos, investigação de flaky tests, geração de massa sintética e apoio com a documentação.
+
+Mesmo assim, eu não confiaria na resposta sem validação. A IA não deve interpretar sozinha regras de negócio, concluir causa raiz, definir se uma release está segura ou determinar a cobertura de testes. A responsabilidade e a decisão permanecem humanas. Também é importante não confundir volume de cenários com qualidade: a IA pode gerar muitos testes rapidamente, mas quantidade não substitui estratégia.
+
+Os principais riscos são alucinação, interpretação incorreta e exposição de dados. Tudo o que pode afetar uma decisão precisa ser validado. Em relação à LGPD, não enviaria CPF, nome, endereço ou dados financeiros para ferramentas não aprovadas. Em segurança, também não compartilharia tokens, credenciais ou informações internas. A IA acelera o processo, mas o QA questiona, valida e assume a decisão.
+
+Concluindo a análise, o incidente da onda 2 evidencia uma deficiência estrutural na forma como a qualidade está sendo conduzida no programa. Temos QA fragmentado, ausência de visão E2E, automação sem confiabilidade e pouca rastreabilidade. Nas seis semanas anteriores à onda 3, eu estruturaria uma operação de QA inicialmente focada na redução dos riscos críticos: compreender e conter os incidentes da onda 2, impedir duplicidade de pagamento, estabelecer a jornada crítica e testes E2E, formalizar a gestão de defeitos, implantar cobertura orientada a risco e preparar observabilidade e rollback para a entrada da onda 3.
+
+O sucesso da frente de QA não deve ser medido apenas pela quantidade de testes executados, mas pela capacidade do programa de compreender seus riscos e impedir que defeitos críticos cheguem à produção.
+
+Usos concretos neste programa: na análise de requisito, eu pediria à IA que identificasse regras ausentes, estados e exceções a partir de histórias já escritas; usaria a resposta como checklist para refinamento, e não como regra de negócio. Para casos de teste, pediria variações positivas, negativas, limites, retries, timeouts, duplicidade e concorrência, revisando tudo contra critérios de aceite e arquitetura. Para defeitos, poderia usar dados anonimizados para agrupar padrões e sugerir correlações, mas causa raiz só seria aceita com evidência técnica em logs, traces, banco e código. Para flaky tests, usaria IA para resumir histórico de falhas e comparar mensagens/stack traces, sem permitir que ela classifique automaticamente uma falha como “flaky” e libere a pipeline.
+
+Na geração de massa, eu utilizaria apenas dados sintéticos e regras aprovadas, sem dados reais de segurados. Na documentação e comunicação executiva, a IA poderia melhorar estrutura e clareza, mas números, riscos, decisões e compromissos seriam revisados por mim.
+
+A falsa sensação de cobertura aparece quando a IA gera dezenas de casos semelhantes e o time interpreta quantidade como proteção. A IA pode inventar regras inexistentes, reproduzir estados que não foram descritos. Por isso, IA seria acelerador de trabalho, não fonte de verdade nem aprovadora de release.
+
+## Cláusula de Autoria e Uso de IA
+
+Ao entregar este teste o candidato declara que a solução foi desenvolvida por ele, refletindo seus conhecimentos e experiência.
+
+Não é permitido utilizar IA generativa (ChatGPT, Claude, Copilot, Gemini ou similares) para produzir respostas, códigos, arquitetura ou textos.
+
+O código e as respostas serão discutidos na entrevista técnica.
+
+Indícios de plágio, uso de IA ou incapacidade de defender tecnicamente a solução poderão resultar em desclassificação.
